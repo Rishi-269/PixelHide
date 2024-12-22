@@ -1,3 +1,5 @@
+.vscode
+*.exe
 *.png
 *.jpg
-*.exe
+*.jpeg
