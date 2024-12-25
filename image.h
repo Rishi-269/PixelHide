@@ -1,11 +1,7 @@
 #include<stdint.h>
 #include<string>
 
-enum ImageType {
-	PNG, JPG, BMP, TGA
-};
-
-class image{
+class Image{
 
 private:
     uint8_t *data_ = nullptr;
@@ -15,11 +11,11 @@ private:
 
 public:
 
-	bool save(std::string &filepath, ImageType extension);
+	bool save(std::string &filepath, int extension);
 
 //constructors and destructor
-	image(std::string &filepath);
-	~image();
+	Image(std::string &filepath);
+	~Image();
 
 //getters
 	int height();

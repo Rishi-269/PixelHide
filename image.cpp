@@ -6,66 +6,48 @@
 #include "stb/stb_image_write.h"
 #include "image.h"
 
-#include<iostream>
-
-bool image::save(std::string &filepath, ImageType extension){
-    bool success = false;
+bool Image::save(std::string &filename, int extension){
     switch (extension) {
-        case PNG:
-            success = stbi_write_png(filepath.data(), width_, height_, channels_, data_, width_*channels_);
-            break;
-        case BMP:
-            success = stbi_write_bmp(filepath.data(), width_, height_, channels_, data_);
-            break;
-        case JPG:
-            success = stbi_write_jpg(filepath.data(), width_, height_, channels_, data_, 100);
-            break;
-        case TGA:
-            success = stbi_write_tga(filepath.data(), width_, height_, channels_, data_);
-            break;
+        case 1:
+            filename += ".png";
+            return stbi_write_png(filename.c_str(), width_, height_, channels_, data_, width_*channels_);
+        case 2:
+            filename += ".bmp";
+            return stbi_write_bmp(filename.c_str(), width_, height_, channels_, data_);
+        default:
+            return false;
     }
-
-    if (success)
-        std::cout<<"Successfully saved image"<<std::endl;
-    else
-        std::cout<<"[ERROR] Failed to save image"<<std::endl;
-    
-    return success;
 }
 
 
 //constructors and destructor
 
-image::image(std::string &filepath){
-    data_ = stbi_load(filepath.data(), &width_, &height_, &channels_, 0);
-    if(data == nullptr)
-        std::cout<<"[ERROR] Failed to load image"<<std::endl;
-    else
-        std::cout<<"Image loaded successfully"<<std::endl;
+Image::Image(std::string &filepath){
+    data_ = stbi_load(filepath.c_str(), &width_, &height_, &channels_, 0);
 }
 
-image::~image(){
+Image::~Image(){
     free(data_);
 }
 
 //getters
 
-int image::height(){
+int Image::height(){
     return height_;
 }
 
-int image::width(){
+int Image::width(){
     return width_;
 }
 
-int image::channels(){
+int Image::channels(){
     return channels_;
 }
 
-uint64_t image::size(){
+uint64_t Image::size(){
     return (uint64_t)height_ * width_ * channels_;
 }
 
-uint8_t* image::data(){
+uint8_t* Image::data(){
     return data_;
 }
