@@ -1,13 +1,15 @@
 #include<iostream>
 #include<fstream>
 #include<limits>
-#include "image.cpp"
+#include "image.hpp"
 
 #ifdef _WIN32
     #define clear_console() system("cls") //for windows
 #else
     #define clear_console() system("clear") //for linux/mac
 #endif
+
+const std::string headerMarker = "MSGSTART";
 
 bool file_exists(const std::string &path) {
     std::ifstream file(path);
@@ -53,39 +55,87 @@ Image *load_image(){
 void insert_message(Image *input_img){
 
     const int channels = input_img->channels();
-    const uint64_t available_bytes = (uint64_t)input_img->height() * input_img->width() * (channels == 2 || channels == 4 ? channels - 1 : channels);
+    //available_bytes is the amount of pixel channel bytes that can be used to edit
+    uint64_t available_bytes = (uint64_t)input_img->height() * input_img->width() * (channels == 2 || channels == 4 ? channels - 1 : channels);
     uint8_t *data = input_img->data();
+
+    /*
+    Header Structure:
+        - Mode (1 bit): 
+            Indicates the LSB mode for reading and storing message:
+            0 -> 1 LSB per pixel channel
+            1 -> 2 LSBs per pixel channel
+        - "MSGSTART" Marker (8 bytes / 64 bits): 
+            A fixed ASCII marker ("MSGSTART") that confirms the presence of a message in the image.
+        - Message Size (8 bytes / 64 bits): 
+            Specifies the size of the message in bytes. 
+
+        Total Header Size: 1 bit (Mode) + 64 bits (Marker) + 64 bits (Message Size) = 129 bits.
+
+    Message:
+        - Variable Length: The actual message data follows the header and is encoded based on the LSB mode.
+    */
+
+    uint8_t mode = 1;
 
     std::string message;
 
+    available_bytes--; //for header mode bit
+
     while (true) {
-        std::cout << "\nYour message should be less than " << (2 * available_bytes / 8 - 1) << " characters.\n";
+        std::cout << "\nYour message should be less than " << (2 * available_bytes / 8 - headerMarker.length() - sizeof(uint64_t)) << " characters.\n";
         std::cout << "Enter your message: ";
         getline(std::cin, message);
 
         if (message.empty())
             std::cout << "\n[ERROR] Message cannot be empty. Please enter a valid message.\n";
-        else if (message.length() > 2 * available_bytes / 8 - 1)
+        else if (message.length() > 2 * available_bytes / 8 - headerMarker.length() - sizeof(uint64_t))
             std::cout << "\n[ERROR] Message is too large to fit. Please try a shorter message.\n";
         else
             break;
     }
     
+    if(message.length() > available_bytes / 8 - headerMarker.length() - sizeof(uint64_t))
+        mode = 2;
+
     uint64_t i = 0;
-    message += '\0';
+
+    //inserting mode
+    data[i++] = (~1 & data[i]) | (mode - 1);
+
+    //inserting marker
+    for (char c : headerMarker){
+        for (uint8_t j = 0; j < 8; j += mode){
+            if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
+                i++;
+
+            data[i] = (~((1<<mode) - 1) & data[i]) | ((c>>j) & ((1<<mode) - 1));
+            i++;
+        }
+    }
+
+    //inserting length
+    for (uint64_t len = message.length(), j = 0; j < sizeof(uint64_t) * 8; j += mode){
+        if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
+            i++;
+
+        data[i] = (~((1<<mode) - 1) & data[i]) | ((len>>j) & ((1<<mode) - 1));
+        i++;
+    }
+
+    //inserting message
     for (char c : message){
-        for (uint8_t j = 0; j < 8; j++){
+        for (uint8_t j = 0; j < 8; j += mode){
 
             if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
                 i++;
             
-            data[i] = ((UINT8_MAX ^ 1) & data[i]) | ((c>>j) & 1);
-            
+            data[i] = (~((1<<mode) - 1) & data[i]) | ((c>>j) & ((1<<mode) - 1));
             i++;
         }
     }
-    std::cout << "\n[SUCCESS] The message was successfully inserted into the image." << std::endl;
 
+    std::cout << "\n[SUCCESS] The message was successfully inserted into the image." << std::endl;
 }
 
 void retrieve_message(Image *input_img){
@@ -95,26 +145,62 @@ void retrieve_message(Image *input_img){
     uint8_t *data = input_img->data();
 
     std::string message;
-    uint64_t i = 0;
+    uint64_t i = 0, message_length = 0;
 
-    do {
+    //retrieving mode
+    uint8_t mode = (data[i++] & 1) + 1;
+
+    //check if there is a message or not from marker
+    for (char c : headerMarker) {
+        char temp = 0;
+
+        for (uint8_t j = 0; j < 8; j += mode){
+            if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
+                i++;
+
+            temp |= (data[i] & ((1<<mode) - 1)) << j;
+            i++;
+        }
+
+        if (temp != c) {
+            std::cout<<"\nNo message found in this image."<<std::endl;
+            return;
+        }   
+    }
+
+    //retrieving length of message
+    for (uint8_t j = 0; j < sizeof(int64_t) * 8; j += mode) {
+        if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
+            i++;
+
+        message_length |= uint64_t((data[i] & ((1<<mode) - 1))) << j;
+        i++;
+    }
+
+    if(message_length > (uint64_t)input_img->width() * input_img->height() * (channels == 2 || channels == 4 ? channels - 1 : channels) - headerMarker.length() - sizeof(int64_t) - 1 || message_length < 1){
+        std::cout << "\n[ERROR] Corrupted header. The message length in the header is invalid. Cannot retrieve the message." << std::endl;
+        return;
+    }
+
+
+    //retrieving the message
+    while(message_length--) {
         char c = 0;
-        for (uint8_t j = 0; j < 8; j++){
+        
+        for (uint8_t j = 0; j < 8; j += mode){
 
             if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
                 i++;
 
-            c |= (data[i] & 1) << j;
+            c |= (data[i] & ((1<<mode) - 1)) << j;
 
             i++;
         }
 
         message += c;
-        
-    } while(message.back() != '\0');
+    }
 
-    message.pop_back();
-
+    std::cout << "\n[SUCCESS] Message retrieved successfully.\n";
     std::cout<<"\nMessage: "<<message<<std::endl;
 }
 
@@ -214,6 +300,7 @@ int main() {
                 std::cout << "\n[ERROR] Invalid choice. Please choose an option between 1 and 5.\n";
                 break;
         }
+
     } while(choice != 5);
 
     delete input_img;

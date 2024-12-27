@@ -4,7 +4,7 @@
 
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
-#include "image.h"
+#include "image.hpp"
 
 bool Image::save(std::string &filename, int extension){
     switch (extension) {
