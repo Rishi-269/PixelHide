@@ -1,5 +1,6 @@
 #include<iostream>
 #include<fstream>
+#include<filesystem>
 #include<limits>
 #include "image.hpp"
 
@@ -56,7 +57,7 @@ void insert_message(Image *input_img){
 
     const int channels = input_img->channels();
     //available_bytes is the amount of pixel channel bytes that can be used to edit
-    uint64_t available_bytes = (uint64_t)input_img->height() * input_img->width() * (channels == 2 || channels == 4 ? channels - 1 : channels);
+    uint64_t available_bytes = input_img->size_no_alpha() - 1; // -1 for header mode bit
     uint8_t *data = input_img->data();
 
     /*
@@ -77,10 +78,10 @@ void insert_message(Image *input_img){
     */
 
     uint8_t mode = 1;
-
     std::string message;
 
-    available_bytes--; //for header mode bit
+    std::string key;
+    char encrypt;
 
     while (true) {
         std::cout << "\nYour message should be less than " << (2 * available_bytes / 8 - headerMarker.length() - sizeof(uint64_t)) << " characters.\n";
@@ -94,6 +95,26 @@ void insert_message(Image *input_img){
         else
             break;
     }
+
+    std::cout << "\nWould you like to encrypt?(y/n) ";
+    std::cin>>encrypt;
+    std::cin.clear();
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    if (encrypt == 'y' || encrypt == 'Y'){
+        while (true) {
+            std::cout << "\nYour key should be of minumum 16 ASCII characters(more character will be better)\n";
+            std::cout << "Enter your key: ";
+            getline(std::cin, key);
+
+            if (key.length() < 16)
+                std::cout << "\n[ERROR] Key cannot be less than 16 characters. Please enter a valid key.\n";
+            else
+                break;
+        }
+    }
+    else
+        std::cout << "\n[INFO] Not Encrypting message\n";
     
     if(message.length() > available_bytes / 8 - headerMarker.length() - sizeof(uint64_t))
         mode = 2;
@@ -103,8 +124,24 @@ void insert_message(Image *input_img){
     //inserting mode
     data[i++] = (~1 & data[i]) | (mode - 1);
 
+    //xor encrpytion
+    uint64_t messageLen = message.length(), keyLen = key.length();
+    std::string header = headerMarker;
+    if(encrypt == 'y' || encrypt == 'Y'){
+        for (int8_t i = 0; i < 8; i++)
+            header[i] ^= key[i];
+
+        for (uint64_t i = 0; i < messageLen; i++)
+            message[i] ^= key[(i % (keyLen - 8)) + 8];
+
+        uint64_t key_64 = 0;
+        for (int8_t i = 0; i < 8; i++)
+            key_64 += uint64_t(key[i + 8]) << (i*8);
+        messageLen ^= key_64;
+    }
+
     //inserting marker
-    for (char c : headerMarker){
+    for (char c : header){
         for (uint8_t j = 0; j < 8; j += mode){
             if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
                 i++;
@@ -115,7 +152,7 @@ void insert_message(Image *input_img){
     }
 
     //inserting length
-    for (uint64_t len = message.length(), j = 0; j < sizeof(uint64_t) * 8; j += mode){
+    for (uint64_t len = messageLen, j = 0; j < sizeof(uint64_t) * 8; j += mode){
         if((channels == 2 || channels == 4) && (i % channels) == channels - 1)
             i++;
 
@@ -141,7 +178,6 @@ void insert_message(Image *input_img){
 void retrieve_message(Image *input_img){
     
     const int channels = input_img->channels();
-    const uint64_t available_bytes = (uint64_t)input_img->height() * input_img->width() * (channels == 2 || channels == 4 ? channels - 1 : channels);
     uint8_t *data = input_img->data();
 
     std::string message;
@@ -150,8 +186,31 @@ void retrieve_message(Image *input_img){
     //retrieving mode
     uint8_t mode = (data[i++] & 1) + 1;
 
+    //xor decryption
+    std::string key;
+    char decrypt = 'n';
+    std::cout<<"\nDo you have a key ?(y/n)\n ";
+    std::cin>>decrypt;
+    std::cin.clear();
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    if (decrypt == 'y' || decrypt == 'Y'){
+        while (true) {
+            std::cout << "\nEnter your key: ";
+            getline(std::cin, key);
+
+            if (key.length() < 16)
+                std::cout << "\n[ERROR] Key cannot be less than 16 characters. Please enter a valid key.\n";
+            else
+                break;
+        }
+    }
+    else
+        std::cout << "\n[INFO] Retrieving message without key\n";
+    uint64_t keyLen = key.length();
+
     //check if there is a message or not from marker
-    for (char c : headerMarker) {
+    for (int k = 0; k < 8; k++) {
         char temp = 0;
 
         for (uint8_t j = 0; j < 8; j += mode){
@@ -161,11 +220,14 @@ void retrieve_message(Image *input_img){
             temp |= (data[i] & ((1<<mode) - 1)) << j;
             i++;
         }
-
-        if (temp != c) {
+        
+        if(decrypt == 'y' || decrypt == 'Y')
+            temp ^= key[k];
+        
+        if (temp != headerMarker[k]) {
             std::cout<<"\nNo message found in this image."<<std::endl;
             return;
-        }   
+        }
     }
 
     //retrieving length of message
@@ -177,14 +239,21 @@ void retrieve_message(Image *input_img){
         i++;
     }
 
-    if(message_length > (uint64_t)input_img->width() * input_img->height() * (channels == 2 || channels == 4 ? channels - 1 : channels) - headerMarker.length() - sizeof(int64_t) - 1 || message_length < 1){
+    if(decrypt == 'y' || decrypt == 'Y'){
+        uint64_t key_64 = 0;
+        for (int8_t i = 0; i < 8; i++)
+            key_64 += uint64_t(key[i + 8]) << (i*8);
+        message_length ^= key_64;
+    }
+
+    if( message_length < 1 || message_length > input_img->size_no_alpha() - 1 - headerMarker.length() - sizeof(int64_t)){
         std::cout << "\n[ERROR] Corrupted header. The message length in the header is invalid. Cannot retrieve the message." << std::endl;
         return;
     }
 
 
     //retrieving the message
-    while(message_length--) {
+    for(uint64_t k = 0; k < message_length; k++) {
         char c = 0;
         
         for (uint8_t j = 0; j < 8; j += mode){
@@ -196,7 +265,8 @@ void retrieve_message(Image *input_img){
 
             i++;
         }
-
+        if(decrypt == 'y' || decrypt == 'Y')
+            c ^= key[(k % (keyLen - 8)) + 8];
         message += c;
     }
 
@@ -206,7 +276,7 @@ void retrieve_message(Image *input_img){
 
 bool isValidName(std::string filename){
     for (char c : filename)
-        if(!isalnum(c) && c != ' ')
+        if(!isalnum(c) && c != ' ' && c != '_' && c != '-')
             return false;
     
     return true;
@@ -232,13 +302,13 @@ void save_image(Image *input_img){
     } while(fileType > 2 || fileType < 1);
 
     while (true) {
-        std::cout << "\nEnter name to save (alphanumeric and spaces allowed): ";
+        std::cout << "\nEnter name to save (alphanumeric, spaces, underscores '_', and hyphens '-' allowed): ";
         std::getline(std::cin, filename);
 
         if (filename.empty())
             std::cout << "\n[ERROR] Filename cannot be empty. Please provide a valid name.\n";
         else if (!isValidName(filename))
-            std::cout << "\n[ERROR] Filename contains invalid characters. Please use alphanumeric characters and spaces only.\n";
+            std::cout << "\n[ERROR] Filename contains invalid characters. Please use alphanumeric characters, spaces, '_', and '-' only.\n";
         else
             break;
     }

@@ -19,6 +19,13 @@ bool Image::save(std::string &filename, int extension){
     }
 }
 
+uint64_t Image::size(){
+    return (uint64_t)height_ * width_ * channels_;
+}
+
+uint64_t Image::size_no_alpha(){
+    return (uint64_t)height_ * width_ * (channels_ == 2 || channels_ == 4 ? channels_ - 1 : channels_);
+}
 
 //constructors and destructor
 
@@ -27,7 +34,7 @@ Image::Image(std::string &filepath){
 }
 
 Image::~Image(){
-    free(data_);
+    stbi_image_free(data_);
 }
 
 //getters
@@ -42,10 +49,6 @@ int Image::width(){
 
 int Image::channels(){
     return channels_;
-}
-
-uint64_t Image::size(){
-    return (uint64_t)height_ * width_ * channels_;
 }
 
 uint8_t* Image::data(){

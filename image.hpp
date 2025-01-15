@@ -12,6 +12,8 @@ private:
 public:
 
 	bool save(std::string &filepath, int extension);
+	uint64_t size();
+	uint64_t size_no_alpha();
 
 //constructors and destructor
 	Image(std::string &filepath);
@@ -21,6 +23,5 @@ public:
 	int height();
 	int width();
 	int channels();
-	uint64_t size();
 	uint8_t* data();
 };
