@@ -6,17 +6,18 @@
 #include "stb/stb_image_write.h"
 #include "image.hpp"
 
-bool Image::save(std::string &filename, int extension){
-    switch (extension) {
-        case 1:
-            filename += ".png";
-            return stbi_write_png(filename.c_str(), width_, height_, channels_, data_, width_*channels_);
-        case 2:
-            filename += ".bmp";
-            return stbi_write_bmp(filename.c_str(), width_, height_, channels_, data_);
-        default:
-            return false;
+void Image::save(bool bmp = false){
+    std::string filename = filepath_.stem().string();
+    bool success = false;
+    if(bmp){
+        filename += "_output.bmp";
+        success = stbi_write_bmp(filename.c_str(), width_, height_, channels_, data_);
     }
+    filename += "_output.png";
+    success = stbi_write_png(filename.c_str(), width_, height_, channels_, data_, width_*channels_);
+
+    if(!success)
+        throw std::runtime_error("Failed to create image: " + filename);
 }
 
 uint64_t Image::size(){
@@ -29,8 +30,14 @@ uint64_t Image::size_no_alpha(){
 
 //constructors and destructor
 
-Image::Image(std::string &filepath){
-    data_ = stbi_load(filepath.c_str(), &width_, &height_, &channels_, 0);
+Image::Image(char* filepath){
+    filepath_ = std::filesystem::absolute(filepath);
+    if(!std::filesystem::exists(filepath_))
+        throw std::runtime_error("File does not exist: \"" + filepath_.string() + '\"');
+
+    data_ = stbi_load(filepath, &width_, &height_, &channels_, 0);
+    if(data_ == nullptr)
+        throw std::runtime_error("Could not load the image.\nPlease check if it's a valid image format: \"" + filepath_.string() + '\"');
 }
 
 Image::~Image(){
@@ -53,4 +60,8 @@ int Image::channels(){
 
 uint8_t* Image::data(){
     return data_;
+}
+
+std::string Image::filename(){
+    return filepath_.stem().string();
 }
