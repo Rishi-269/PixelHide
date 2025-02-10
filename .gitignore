@@ -1,8 +1,13 @@
 .vscode
+
 *.exe
 *.png
 *.jpg
 *.jpeg
 *.bmp
+
+keys
+retrieved
+output
 
 testing.cpp

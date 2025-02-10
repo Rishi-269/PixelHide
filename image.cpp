@@ -1,20 +1,19 @@
-
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-
-#include "stb/stb_image.h"
-#include "stb/stb_image_write.h"
 #include "image.hpp"
 
-void Image::save(bool bmp = false){
-    std::string filename = filepath_.stem().string();
+void Image::save(const bool bmp){
+
+    std::filesystem::create_directory("output"); //creates folder if not exists
+
+    std::string filename = "output/" + filepath_.stem().string() + "_i";
     bool success = false;
     if(bmp){
-        filename += "_output.bmp";
+        filename += ".bmp";
         success = stbi_write_bmp(filename.c_str(), width_, height_, channels_, data_);
     }
-    filename += "_output.png";
-    success = stbi_write_png(filename.c_str(), width_, height_, channels_, data_, width_*channels_);
+    else{
+        filename += ".png";
+        success = stbi_write_png(filename.c_str(), width_, height_, channels_, data_, width_*channels_);
+    }
 
     if(!success)
         throw std::runtime_error("Failed to create image: " + filename);
@@ -30,8 +29,8 @@ uint64_t Image::size_no_alpha(){
 
 //constructors and destructor
 
-Image::Image(char* filepath){
-    filepath_ = std::filesystem::absolute(filepath);
+Image::Image(const char* filepath){
+    filepath_ = std::filesystem::proximate(filepath);
     if(!std::filesystem::exists(filepath_))
         throw std::runtime_error("File does not exist: \"" + filepath_.string() + '\"');
 

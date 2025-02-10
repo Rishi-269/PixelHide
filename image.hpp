@@ -1,4 +1,11 @@
-#include<stdint.h>
+#ifndef IMAGE_HPP
+#define IMAGE_HPP
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb/stb_image.h"
+#include "stb/stb_image_write.h"
+
 #include<filesystem>
 
 class Image{
@@ -12,12 +19,12 @@ private:
 
 public:
 
-	void save(bool bmp);
+	void save(const bool bmp = false);
 	uint64_t size();
 	uint64_t size_no_alpha();
 
 //constructors and destructor
-	Image(char *filepath);
+	Image(const char *filepath);
 	~Image();
 
 //getters
@@ -27,3 +34,5 @@ public:
 	uint8_t* data();
 	std::string filename();
 };
+
+#endif
