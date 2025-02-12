@@ -1,9 +1,14 @@
 #include <iostream>
+#include <filesystem>
+#include <thread>
+
 #include "tiny-aes/aes.hpp"
 #include "image.hpp"
 #include "file.hpp"
 
-std::string headerMarker = "MSGSTART";
+std::string headerMarker = "MSGSTART"; //can change it with you own 8 byte marker
+
+unsigned int numThreads = std::thread::hardware_concurrency(); //can be changed according to the system
 
 /*
     Header Structure:
@@ -21,8 +26,36 @@ std::string headerMarker = "MSGSTART";
     Hidden File Data:
         - Variable Length Data: The actual file data follows the header and is encoded based on the LSB mode.
         - Variable Length Extension: stored in reverse separating by null character. Example: [data][data]...[data]['\0'][t][x][t][.]
-        - PKCS7 Padding (optional): For Block Cipher
+
+    Encrypton:
+        header marker + data size = 128 bits are encrypted using AES in ECB mode with 128 bit Counter(Initialization Vector) as key.
+
+        and the variable size file data is encrypted using AES in CTR mode with Key and Counter.
+
 */
+
+//increments counter by 'n' instead of 1
+void incrementCounter(uint8_t* counter, uint64_t carry) {
+    for (int i = AES_BLOCKLEN - 1; i >= 0 && carry > 0; --i) {
+        uint64_t sum = counter[i] + carry;
+        counter[i] = sum & UINT8_MAX; // Store the lower 8 bits
+        carry = sum >> 8; // Carry over the remaining bits
+    }
+}
+
+//inserts file inside the image in chunks
+void insertChunk(uint8_t* imgData, uint64_t imgIterator, uint8_t* fileData, uint64_t chunkSize, uint8_t mode, uint8_t channels) {
+
+    for (uint64_t fileIterator = 0; fileIterator < chunkSize; fileIterator++){
+        for (uint8_t j = 0; j < 8; j += mode){
+            if(channels % 2 == 0 && (imgIterator % channels) == channels - 1)
+                imgIterator++;
+            
+            imgData[imgIterator] = (~((1<<mode) - 1) & imgData[imgIterator]) | ((fileData[fileIterator]>>j) & ((1<<mode) - 1));
+            imgIterator++;
+        }
+    }
+}
 
 //without encryption insertData
 void insertData(Image &inputImage, File &inputFile){
@@ -32,8 +65,8 @@ void insertData(Image &inputImage, File &inputFile){
 
     uint64_t imgIterator = 0;
 
-    const uint64_t fileSize = inputFile.size();
-    const uint8_t channels = inputImage.channels();
+    uint64_t fileSize = inputFile.size();
+    uint8_t channels = inputImage.channels();
 
     uint8_t mode = 1;
 
@@ -62,17 +95,42 @@ void insertData(Image &inputImage, File &inputFile){
         imgData[imgIterator] = (~((1<<mode) - 1) & imgData[imgIterator]) | ((fileSize>>j) & ((1<<mode) - 1));
         imgIterator++;
     }
+    
 
-    //inserting file data
-    for (uint64_t fileIterator = 0; fileIterator < fileSize; fileIterator++){
-        for (uint8_t j = 0; j < 8; j += mode){
-            if(channels % 2 == 0 && (imgIterator % channels) == channels - 1)
+    // inserting file data through threads
+    std::vector<std::thread> threads;
+    uint64_t fileIterator = 0, chunkSize = fileSize / numThreads;
+
+    for (unsigned int i = 0; i < numThreads - 1; ++i) {
+
+        threads.emplace_back(insertChunk, imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+
+        fileIterator += chunkSize;
+
+        if(channels % 2 == 0){
+            imgIterator += ((chunkSize * (8 / mode)) / (channels - 1)) * channels; //adding skipped alpha channels too
+
+            //remaining bits not in block length of channels, loop will run 2 times at max so O(1) time
+            uint8_t rem_bits = (chunkSize * (8 / mode)) % (channels - 1);
+            while (rem_bits > 0){
+                if((imgIterator % channels) != channels - 1)
+                    rem_bits--;
                 imgIterator++;
-            
-            imgData[imgIterator] = (~((1<<mode) - 1) & imgData[imgIterator]) | ((fileData[fileIterator]>>j) & ((1<<mode) - 1));
-            imgIterator++;
+            }
+        }
+        else{
+            imgIterator += (chunkSize * (8 / mode));
         }
     }
+
+    chunkSize += fileSize % numThreads; //remaining file data will be processed by main thread
+    insertChunk(imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+
+    for (std::thread &thread : threads)
+        thread.join();
+
+    std::cout<<"File inserted successfully\n";
+
 }
 
 //with encryption insertData
@@ -83,8 +141,8 @@ void insertData(Image &inputImage, File &inputFile, Key &inputKey){
 
     uint64_t imgIterator = 0;
 
-    const uint64_t fileSize = inputFile.size();
-    const uint8_t channels = inputImage.channels();
+    uint64_t fileSize = inputFile.size();
+    uint8_t channels = inputImage.channels();
 
     AES_ctx ctx;
     uint8_t *iv = inputKey.IV();
@@ -121,26 +179,74 @@ void insertData(Image &inputImage, File &inputFile, Key &inputKey){
         }
     }
 
-    AES_init_ctx_iv(&ctx, key, iv);
-    AES_CTR_xcrypt_buffer(&ctx, fileData, fileSize);
-
     //inserting file data
-    for (uint64_t fileIterator = 0; fileIterator < fileSize; fileIterator++){
+    AES_init_ctx_iv(&ctx, key, iv);
+
+    uint64_t fileIterator = 0, chunkSize = (fileSize / (numThreads * AES_KEYLEN)) * AES_KEYLEN;
+    std::vector<std::thread> threads;
+
+    for (unsigned int i = 0; i < numThreads - 1; ++i) {
+
+        threads.emplace_back([imgData, imgIterator, fileData, fileIterator, chunkSize, mode, channels](AES_ctx ctx) {
+            AES_CTR_xcrypt_buffer(&ctx, (fileData + fileIterator), chunkSize);
+            insertChunk(imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+        }, ctx);
+
+        fileIterator += chunkSize;
+
+        if(channels % 2 == 0){
+            imgIterator += ((chunkSize * (8 / mode)) / (channels - 1)) * channels;
+
+            uint8_t rem_bits = (chunkSize * (8 / mode)) % (channels - 1);
+            while (rem_bits > 0){
+                if((imgIterator % channels) != channels - 1)
+                    rem_bits--;
+                imgIterator++;
+            }
+        }
+        else{
+            imgIterator += (chunkSize * (8 / mode));
+        }
+
+        incrementCounter(ctx.Iv, chunkSize / AES_KEYLEN);
+    }
+
+    chunkSize += fileSize % (numThreads * AES_KEYLEN); //add remaining file for the main thread to process
+    AES_CTR_xcrypt_buffer(&ctx, (fileData + fileIterator), chunkSize);
+    insertChunk(imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+
+    for (std::thread &thread : threads)
+        thread.join();
+
+    std::cout<<"File inserted successfully\n";
+    
+}
+
+//retreives file inside the image in chunks
+void retrieveChunk(uint8_t* imgData, uint64_t imgIterator, uint8_t* fileData, uint64_t chunkSize, uint8_t mode, uint8_t channels) {
+    for(uint64_t fileIterator = 0; fileIterator < chunkSize; fileIterator++) {
+        uint8_t tempByte = 0;
+        
         for (uint8_t j = 0; j < 8; j += mode){
+
             if(channels % 2 == 0 && (imgIterator % channels) == channels - 1)
                 imgIterator++;
-            
-            imgData[imgIterator] = (~((1<<mode) - 1) & imgData[imgIterator]) | ((fileData[fileIterator]>>j) & ((1<<mode) - 1));
+
+            tempByte |= (imgData[imgIterator] & ((1<<mode) - 1)) << j;
+
             imgIterator++;
         }
+        
+        fileData[fileIterator] = tempByte;
     }
 }
 
+//without encryption retrieveData
 void retrieveData(Image &inputImage){
 
-    const uint8_t *imgData = inputImage.data();
-    const uint8_t channels = inputImage.channels();
-    const uint64_t imgSize = inputImage.size();
+    uint8_t *imgData = inputImage.data();
+    uint8_t channels = inputImage.channels();
+    uint64_t imgSize = inputImage.size();
 
     uint64_t imgIterator = 0, fileSize = 0;
 
@@ -175,39 +281,59 @@ void retrieveData(Image &inputImage){
     }
     
     if(fileSize < 1 || fileSize > (mode * (inputImage.size_no_alpha() - 1) / 8) - headerMarker.length() - sizeof(int64_t)){
-        std::cout << "Corrupted header. The message length in the header is invalid. Cannot retrieve the message.\n";
+        std::cout << "Corrupted header. The message length in the header is invalid. Cannot retrieve the file.\n";
         return;
     }
 
-    //retrieving the data into the file
+    //retrieving the data into the file using threads
     uint8_t *fileData = new uint8_t[fileSize];
+    uint64_t fileIterator = 0, chunkSize = fileSize / numThreads;
 
-    for(uint64_t fileIterator = 0; fileIterator < fileSize; fileIterator++) {
-        int8_t tempByte = 0;
-        
-        for (uint8_t j = 0; j < 8; j += mode){
+    std::vector<std::thread> threads;
 
-            if(channels % 2 == 0 && (imgIterator % channels) == channels - 1)
+    for (unsigned int i = 0; i < numThreads - 1; ++i) {
+
+        threads.emplace_back(retrieveChunk, imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+
+        fileIterator += chunkSize;
+
+        if(channels % 2 == 0){
+            imgIterator += ((chunkSize * (8 / mode)) / (channels - 1)) * channels; //adding skipped alpha channels too
+
+            //remaining bits not in block length of channels, loop will run 2 times at max so O(1) time
+            uint8_t rem_bits = (chunkSize * (8 / mode)) % (channels - 1);
+            while (rem_bits > 0){
+                if((imgIterator % channels) != channels - 1)
+                    rem_bits--;
                 imgIterator++;
-
-            tempByte |= (imgData[imgIterator] & ((1<<mode) - 1)) << j;
-
-            imgIterator++;
+            }
+        }
+        else{
+            imgIterator += (chunkSize * (8 / mode));
         }
         
-        fileData[fileIterator] = tempByte;
     }
+
+    chunkSize += fileSize % numThreads; //remaining file data will be processed by main thread
+    retrieveChunk(imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+
+    for (std::thread &thread : threads)
+        thread.join();
 
     File outputFile(inputImage.filename(), fileData, fileSize);
 
     outputFile.save();
+
+    std::cout<<"File retrieved successfully\n";
+
 }
 
+//without encryption retrieveData
 void retrieveData(Image &inputImage, Key &inputKey){
 
-    const uint8_t *imgData = inputImage.data();
-    const uint8_t channels = inputImage.channels();
-    const uint64_t imgSize = inputImage.size();
+    uint8_t *imgData = inputImage.data();
+    uint8_t channels = inputImage.channels();
+    uint64_t imgSize = inputImage.size();
 
     uint64_t imgIterator = 0, fileSize = 0;
 
@@ -255,31 +381,53 @@ void retrieveData(Image &inputImage, Key &inputKey){
         return;
     }
 
-    //retrieving the data into the file
+    //retrieving the data into the file using threads
     uint8_t *fileData = new uint8_t[fileSize];
 
-    for(uint64_t fileIterator = 0; fileIterator < fileSize; fileIterator++) {
-        uint8_t tempByte = 0;
-        
-        for (uint8_t j = 0; j < 8; j += mode){
-
-            if(channels % 2 == 0 && (imgIterator % channels) == channels - 1)
-                imgIterator++;
-
-            tempByte |= (imgData[imgIterator] & ((1<<mode) - 1)) << j;
-
-            imgIterator++;
-        }
-        
-        fileData[fileIterator] = tempByte;
-    }
+    uint64_t fileIterator = 0, chunkSize = (fileSize / (numThreads * AES_KEYLEN)) * AES_KEYLEN;
 
     AES_init_ctx_iv(&ctx, key, iv);
-    AES_CTR_xcrypt_buffer(&ctx, fileData, fileSize);
+
+    std::vector<std::thread> threads;
+
+    for (unsigned int i = 0; i < numThreads - 1; ++i) {            
+
+        threads.emplace_back([imgData, imgIterator, fileData, fileIterator, chunkSize, mode, channels](AES_ctx ctx) {
+            retrieveChunk(imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+            AES_CTR_xcrypt_buffer(&ctx, (fileData + fileIterator), chunkSize);
+        }, ctx);
+
+        fileIterator += chunkSize;
+
+        if(channels % 2 == 0){
+            imgIterator += ((chunkSize * (8 / mode)) / (channels - 1)) * channels;
+
+            uint8_t rem_bits = (chunkSize * (8 / mode)) % (channels - 1);
+            while (rem_bits > 0){
+                if((imgIterator % channels) != channels - 1)
+                    rem_bits--;
+                imgIterator++;
+            }
+        }
+        else{
+            imgIterator += (chunkSize * (8 / mode));
+        }
+
+        incrementCounter(ctx.Iv, chunkSize / AES_KEYLEN);
+    }
+
+    chunkSize += fileSize % (numThreads * AES_KEYLEN); //add remaining file for the main thread to process
+    retrieveChunk(imgData, imgIterator, (fileData + fileIterator), chunkSize, mode, channels);
+    AES_CTR_xcrypt_buffer(&ctx, (fileData + fileIterator), chunkSize);
+
+    for (std::thread &thread : threads)
+        thread.join();
 
     File outputFile(inputImage.filename(), fileData, fileSize);
 
     outputFile.save();
+
+    std::cout<<"File retrieved successfully\n";
 }
 
 void printHelp(char* program) {
@@ -318,6 +466,9 @@ int main(int argc, char* argv[]) {
             throw std::runtime_error("Invalid usage. Use \"./" + std::filesystem::path(argv[0]).stem().string() + " -h\" for help.");
 
         std::string mode(argv[1]);
+
+        if (numThreads == 0)
+            numThreads = 1;
 
         if (mode == "-h" || mode == "--help"){
             printHelp(argv[0]);
@@ -365,6 +516,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: " << e.what() << '\n';
         return 1;
     }
-    
+
     return 0;
 }

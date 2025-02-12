@@ -66,7 +66,13 @@ File::File(const std::string filename, uint8_t* &data, const uint64_t size) : da
     
     original_size_ = rev_iterator + 1;
     filepath_ = std::filesystem::proximate("retrieved/" + filename + "_r");
-    filepath_.replace_extension(extension);
+    try{
+        filepath_.replace_extension(extension);
+    }
+    catch(...){
+        throw std::runtime_error("Corrupted file data. Cannot retrieve the file.");
+    }
+    
 }
 
 File::~File(){
