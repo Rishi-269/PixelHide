@@ -2,7 +2,7 @@
 #include <filesystem>
 #include <thread>
 
-#include "tiny-aes/aes.hpp"
+#include "tiny-aes/aes.h"
 #include "image.hpp"
 #include "file.hpp"
 
