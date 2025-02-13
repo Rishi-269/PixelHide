@@ -453,9 +453,9 @@ void printHelp(char* program) {
     std::cout << "                    [key]   - Optional encryption key file path.\n\n";
 
     std::cout << "Examples:\n";
-    std::cout << "  ./" << progName << " --key mykey.bin\n";
-    std::cout << "  ./" << progName << " --insert image.png secret.txt mykey.bin\n";
-    std::cout << "  ./" << progName << " --retrieve image.png mykey.bin\n\n";
+    std::cout << "  ./" << progName << " --key mykey\n";
+    std::cout << "  ./" << progName << " --insert image.png secret.txt keys/mykey.key\n";
+    std::cout << "  ./" << progName << " --retrieve output/image_i.png keys/mykey.key\n\n";
 }
 
 
