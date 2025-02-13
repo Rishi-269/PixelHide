@@ -20,7 +20,7 @@ g++ -std=c++17 -o pixelhide main.cpp image.cpp file.cpp tiny-aes/aes.c
 ### Download & Compile
 1. Clone the repository:
    ```sh
-   git clone https://github.com/your-repo/PixelHide.git
+   git clone https://github.com/Rishi-269/PixelHide.git
    cd PixelHide
    ```
 2. Compile the project:
@@ -62,7 +62,7 @@ Examples:
 
 ## Download Compiled Version
 An executable for windows can be downloaded from:
-[Download Pixel Hide]([https://your-download-link.com](https://github.com/Rishi-269/PixelHide/releases/tag/v1.0))
+[Download Pixel Hide](https://github.com/Rishi-269/PixelHide/releases/tag/v1.0)
 
 ---
 
